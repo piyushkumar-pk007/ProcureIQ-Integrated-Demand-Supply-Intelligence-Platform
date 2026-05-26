@@ -1,75 +1,83 @@
 # ProcureIQ — Integrated Demand-Supply Intelligence Platform
 
-ProcureIQ is an end-to-end supply chain analytics project built for a data science / supply chain analytics interview setting. The goal is to show how demand forecasting, supplier risk scoring, procurement optimization, and scenario simulation can work together in one decision-support workflow instead of living in separate notebooks.
+ProcureIQ is a supply chain analytics project that brings together forecasting, supplier performance analytics, procurement optimization, and scenario simulation in one workflow. The idea behind the project is simple: supply chain decisions are rarely about only one thing. A planning team may know demand is rising, but they still need to understand which suppliers are reliable, how freight and pricing are behaving, and how to allocate orders under practical business constraints.
 
-**This is a Kaggle-based interview demonstration inspired by real supply-chain procurement and forecasting problems.**
+This project was built to answer those questions in a connected way rather than as isolated analyses.
 
-The project uses the public Kaggle dataset `apoorvwatsky/supply-chain-shipment-pricing-data`. It is not production client data, and it should be presented honestly as a prototype that demonstrates consulting-style problem solving, modeling choices, and implementation quality.
+**This is a Kaggle-based demonstration inspired by real supply-chain procurement and forecasting problems.**
+
+The dataset used here is public Kaggle data, not production enterprise data. That matters, because some business constraints such as MOQ policy, storage limits, and service-level assumptions are modeled explicitly in the code rather than coming directly from a live ERP or procurement system.
 
 ## What this project is
 
-At a high level, ProcureIQ answers three practical business questions:
+ProcureIQ is an end-to-end decision-support project for procurement and supply chain planning. It starts with shipment-level procurement data and moves through the full analytical lifecycle:
 
-1. What are we likely to need next?
-2. Which suppliers are operationally risky?
-3. Given cost, risk, and service constraints, how should we allocate procurement?
+1. ingest and clean operational data
+2. build supply chain features
+3. forecast demand and unit price
+4. score supplier reliability and risk
+5. optimize procurement allocation
+6. simulate stress scenarios
+7. present results through a dashboard
 
-To answer those questions, the project is organized into six connected layers:
+The project is designed to answer a practical planning question:
 
-1. Data ingestion
-2. Data cleaning and preprocessing
-3. Feature engineering
-4. Forecasting
-5. Supplier risk scoring
-6. Procurement optimization and scenario simulation
-
-The final output is a Streamlit dashboard that makes the analysis easier to explain in an interview or portfolio review.
+**If demand changes, supplier behavior is uneven, and cost matters, how should procurement decisions be made more intelligently?**
 
 ## Why this matters
 
-In supply chain and procurement analytics, forecasting alone is not enough. A forecast can say demand is rising, but that does not automatically tell you:
+In real supply chain environments, a forecast is only part of the story.
 
-- whether your current suppliers are reliable
-- whether freight behavior is becoming unstable
-- whether concentration risk is growing
-- whether the cheapest supplier is actually the best choice once service-level risk is included
+If the team forecasts demand well but ignores supplier risk:
 
-This is why the project is built as a decision intelligence workflow rather than just a forecasting notebook.
+- stockouts can still happen
+- late deliveries can still disrupt service levels
+- freight cost instability can still hurt margins
+- procurement may over-concentrate on a single supplier
 
-From a consulting point of view, this matters because stakeholders usually care about business decisions, not isolated model accuracy. A stronger interview story is:
+If the team optimizes only for cheapest cost:
 
-- demand was forecasted
-- supplier behavior was scored
-- sourcing decisions were optimized
-- recommendations were stress-tested under uncertainty
+- service risk may increase
+- late suppliers may receive too much allocation
+- demand uncertainty may not be considered
 
-That is much closer to how a real analytics solution would be framed in Strategy & Consulting, Data & AI, or supply chain transformation work.
+This project matters because it treats supply chain planning as a connected decision problem rather than a single-model exercise.
 
-## What data was used
+## Business problem
 
-**Dataset source**
+The business problem behind ProcureIQ is common across procurement and planning functions:
+
+- demand is uncertain
+- suppliers are not equally reliable
+- pricing and freight behavior vary over time
+- planners need service-level protection
+- procurement teams need an allocation plan, not just a report
+
+The goal of the platform is to turn raw historical shipment data into decisions that are more actionable:
+
+- what demand is likely next
+- which suppliers look risky
+- how sourcing should be allocated
+- what could happen under adverse scenarios
+
+## Dataset
+
+Source:
 
 - Kaggle: `apoorvwatsky/supply-chain-shipment-pricing-data`
 
-**Expected business fields**
-
-The dataset contains procurement and shipment-related fields such as:
+The data includes fields such as:
 
 - country
 - vendor
 - manufacturing site
 - product group
-- sub classification
 - item description
-- brand
-- vendor inco term
-- fulfill via
 - shipment mode
-- PO sent to vendor date
+- PO sent date
 - scheduled delivery date
-- delivered to client date
-- delivery recorded date
-- unit of measure
+- delivered date
+- recorded date
 - line item quantity
 - line item value
 - pack price
@@ -78,30 +86,37 @@ The dataset contains procurement and shipment-related fields such as:
 - freight cost
 - insurance cost
 
-## What the project does
+This is enough to build a meaningful prototype around planning, supplier performance, and sourcing logic.
+
+## Project approach
+
+The project is organized into a few major layers.
 
 ### 1. Data ingestion
 
-The ingestion layer supports two paths:
+The first step is to make data loading easy and reliable.
 
-- automatic Kaggle API download if credentials are available in `.env`
-- manual CSV placement inside `data/raw/`
+ProcureIQ supports:
 
-It detects the main CSV, reads it safely, and saves an intermediate copy to:
+- Kaggle API download through `.env`
+- manual CSV placement in `data/raw/`
+
+The ingestion step detects the source file automatically and saves an intermediate version to:
 
 - `data/processed/clean_base.csv`
 
-This makes the rest of the pipeline independent of how the data was originally obtained.
+This avoids repeating the raw download or manual placement logic later in the pipeline.
 
 ### 2. Preprocessing
 
-Operational data is messy. This project does not assume a clean source table.
+Supply chain datasets often contain inconsistent date formats, placeholder text, mixed numeric fields, and incomplete records. This dataset had the same kind of issues.
 
 The preprocessing step:
 
-- standardizes column names to `snake_case`
-- parses shipment and delivery dates
-- converts key numeric fields
+- standardizes columns to `snake_case`
+- parses operational date fields
+- converts core numeric columns
+- creates missing-value flags before imputation
 - handles text placeholders such as:
   - `Freight Included in Commodity Cost`
   - `Invoiced Separately`
@@ -109,21 +124,21 @@ The preprocessing step:
   - `See DN...`
   - `Date Not Captured`
   - `N/A - From RDC`
-- creates missing-value flags before imputation
 - logs cleaning decisions
-- avoids silently dropping rows
 
-In the current run of this project:
+One important choice here was to avoid quietly dropping records. The pipeline keeps the row count intact and makes the cleaning traceable.
+
+Current run summary:
 
 - rows before cleaning: `10,324`
 - rows after cleaning: `10,324`
 - row drop rate: `0.0%`
 
-That is important because it shows the pipeline preserved the original observations while still improving usability for modeling.
+That was intentional. In operational analytics, silent record loss can distort vendor performance and demand patterns.
 
 ### 3. Feature engineering
 
-After preprocessing, the project creates features that are useful for both business analysis and modeling.
+After preprocessing, the project creates features that make the data useful for both analysis and modeling.
 
 Examples include:
 
@@ -142,53 +157,62 @@ Examples include:
 - `item_weekly_demand`
 - `item_weekly_avg_price`
 
-These features matter because they convert raw transactions into signals that can drive better forecasting, risk scoring, and optimization decisions.
+These features are important because they translate raw transactions into procurement signals:
+
+- delay behavior
+- landed cost behavior
+- vendor consistency
+- demand evolution over time
 
 ### 4. Forecasting
 
-The forecasting layer predicts:
+The forecasting layer predicts two things:
 
 - weekly demand using `sum(line_item_quantity)`
 - weekly weighted average unit price
 
-It does not rely on a single model. Instead, it compares several methods:
+Instead of relying on one model, the project compares multiple approaches:
 
-- seasonal naive baseline
-- moving average baseline
+- seasonal naive
+- moving average
 - SARIMA
-- Prophet if available
-- XGBoost, with RandomForest fallback if needed
+- Prophet if installed
+- XGBoost, with RandomForest fallback
 
-**Why these models were used**
+### Why these models were chosen
 
-- `seasonal_naive` is a simple baseline that every time-series project should beat.
-- `moving_average` is useful when series are noisy and the user wants a transparent benchmark.
-- `SARIMA` is a strong classical model for structured univariate time series.
-- `Prophet` is optional because it is easy to explain, but not always necessary.
-- `XGBoost` is included because lag-based tree models often work well when demand patterns are nonlinear or irregular.
+Each model was chosen for a reason:
 
-**Why walk-forward validation was used**
+- `seasonal_naive` is a baseline that any serious forecast should be compared against
+- `moving_average` is simple, transparent, and useful when explaining results to non-technical stakeholders
+- `SARIMA` provides a strong classical time-series benchmark
+- `Prophet` is optional because it is easy to use and compare, but not required
+- `XGBoost` is included because lag-based gradient boosting often performs well when behavior is nonlinear or noisy
 
-Random train/test splitting is not appropriate for time series because it leaks future information. This project uses time-aware validation so model quality is measured in a way that resembles real planning cycles.
+The point is not to force one “best” technique. The point is to compare approaches honestly and keep the winning model evidence-based.
 
-**What happened in the current run**
+### Why walk-forward validation was used
 
-The strongest results in this run came from the weighted-average price forecasts for HRDT item series.
+Time series should be validated in time order. Random train/test splitting would leak future information and make results look better than they really are. For that reason, the project uses walk-forward style validation through `TimeSeriesSplit`.
+
+### Current forecasting outcome
+
+In the current run, some of the strongest results came from weighted-average price forecasts for HRDT item series.
 
 Examples from `data/outputs/model_comparison.csv`:
 
 - `HRDT | HRDT | HIV 1/2, Uni-Gold HIV Kit, 20 Tests`
   - target: `weekly_weighted_avg_price`
-  - best visible model: `xgboost_or_rf`
+  - model: `xgboost_or_rf`
   - WAPE: `3.57`
   - RMSE: `0.235`
 - `HRDT | HRDT | HIV 1/2, Determine Complete HIV Kit, 100 Tests`
   - target: `weekly_weighted_avg_price`
-  - best visible model: `xgboost_or_rf`
+  - model: `xgboost_or_rf`
   - WAPE: `7.88`
   - RMSE: `0.115`
 
-The project is also designed to fall back to a coarser aggregation if item-level weekly history is too sparse. That keeps the work honest and practical for public data.
+The code also handles a practical public-data limitation: if item-level weekly history is not deep enough, the pipeline can aggregate more coarsely instead of pretending the series is stronger than it is.
 
 Forecast outputs are saved to:
 
@@ -198,16 +222,16 @@ Forecast outputs are saved to:
 
 ### 5. Supplier risk scoring
 
-The supplier risk module creates an interpretable risk score from `0` to `100`, where:
+Supplier risk is modeled in two layers.
+
+#### Rule-based supplier risk score
+
+This produces a score from `0` to `100`, where:
 
 - `0` means very safe
 - `100` means very risky
 
-It uses two approaches:
-
-**A. Rule-based business score**
-
-Built from:
+It is based on:
 
 - on-time delivery rate
 - average delay
@@ -215,21 +239,27 @@ Built from:
 - price volatility
 - freight volatility
 - missing-data rate
-- shipment concentration
-- country and product dependence where possible
+- country concentration
+- product concentration
 
-**B. ML late-delivery risk model**
+#### ML-based late delivery model
 
-A tree-based classifier predicts whether a shipment will be late using historical operational features. Feature importance is saved, and SHAP can be added if available.
+In addition to the rule-based score, the project trains a tree-based classifier to estimate late-delivery likelihood from historical shipment features.
 
-**Why this design was used**
+### Why both approaches were used
 
-The rule-based score is easy to explain to procurement stakeholders. The ML model adds predictive signal and shows stronger data science depth. Together, they balance explainability and modeling sophistication.
+The rule-based score is useful because business users can understand it quickly. The ML model is useful because it can detect nonlinear patterns and gives a predictive second view of supplier reliability.
 
-**What happened in the current run**
+This combination was chosen deliberately:
+
+- rule-based scoring supports explainability
+- ML supports predictive depth
+
+### Current supplier risk outcome
+
+From the current run:
 
 - suppliers scored: `73`
-- most suppliers landed in the `Medium Risk` band
 
 Examples from `data/outputs/top_risky_suppliers.csv`:
 
@@ -247,42 +277,40 @@ Outputs are saved to:
 
 ### 6. Procurement optimization
 
-The optimization layer translates analytics into a recommendation.
+The optimization layer turns the analysis into a sourcing recommendation.
 
-Decision variable:
+The decision problem is:
 
-- how much of each item to procure from each historically feasible vendor
+**How much should be procured from each supplier for each item while balancing cost, risk, and service requirements?**
 
-Objective:
+The optimization model is built with **PuLP**.
 
-- minimize purchase cost
-- minimize freight cost
-- include holding cost
-- penalize supplier risk
-- satisfy demand and service constraints
+The objective combines:
 
-The model is built with **PuLP**.
+- purchase cost
+- freight cost
+- holding cost
+- supplier risk penalty
 
-**Why PuLP was used**
-
-- it is easy to explain in interviews
-- it is Python-native
-- it supports clear business constraints
-- it is appropriate for a portfolio-grade mixed-integer optimization demonstration
-
-**Constraints included**
+The constraints include:
 
 - demand satisfaction
 - minimum order quantity
 - storage capacity
 - risky supplier allocation caps
-- ABC service-level targets
+- ABC-based service-level logic
 
-**Why historical vendor-item pairs were used**
+### Why PuLP was chosen
 
-The Kaggle data does not explicitly define a perfect supplier-item master. So feasible vendor-item combinations are derived from historical shipments. That is a realistic and transparent way to avoid recommending impossible allocations.
+PuLP was chosen because it is readable, transparent, and practical for this kind of prototype. It makes the decision logic easy to inspect, which is important when the audience includes both technical and business stakeholders.
 
-**What happened in the current run**
+### Why historical vendor-item pairs were used
+
+The dataset does not provide a complete vendor-item master with formal sourcing eligibility rules. To keep recommendations realistic, the optimizer only allows vendor-item combinations that actually appeared in historical shipments.
+
+That is a simple but important design choice. Without it, the optimizer could recommend theoretically cheap but operationally unsupported supplier-item allocations.
+
+### Current optimization outcome
 
 From `data/outputs/optimization_summary.csv`:
 
@@ -292,33 +320,25 @@ From `data/outputs/optimization_summary.csv`:
 
 From `data/outputs/cost_savings_vs_baseline.csv`:
 
-- savings vs cheapest-only baseline: `336.10M`
-- savings vs historical-allocation baseline: `370.59M`
+- estimated improvement vs cheapest-only baseline: `336.10M`
+- estimated improvement vs historical allocation baseline: `370.59M`
 
-These savings are generated from a prototype model with public data and configurable assumptions, so they should be described as scenario outputs rather than guaranteed real-world savings.
+These should be presented as model-based scenario outputs, not guaranteed realized savings.
 
 ### 7. Scenario simulation
 
-The final analytical layer tests how the optimized plan behaves under uncertainty.
+The simulation layer stress-tests the optimized plan.
 
-Scenarios include:
+Scenarios included:
 
 - base case
 - high demand case
 - supplier delay case
 - cost inflation case
 
-This is done with Monte Carlo simulation.
+Monte Carlo simulation is used because a procurement plan should be tested under uncertainty, not just evaluated at one point estimate.
 
-**Why simulation was used**
-
-Optimization produces a point recommendation, but procurement decisions live in uncertainty. Simulation helps answer:
-
-- what happens if demand spikes?
-- what happens if risky suppliers are delayed?
-- what happens if costs inflate?
-
-**What happened in the current run**
+### Current simulation outcome
 
 From `data/outputs/scenario_summary.csv`:
 
@@ -327,58 +347,114 @@ From `data/outputs/scenario_summary.csv`:
 - high demand case average service level: `0.782`
 - cost inflation case average total cost: `261.79M`
 
-The most important business takeaway from this run is that the plan is much more vulnerable to demand shock than to the modeled supplier delay shock.
+The most useful takeaway from this run is that demand shock was more damaging to service level than the modeled supplier delay shock. That suggests the next design improvement should likely focus on inventory buffers, demand sensing, or service-level policy rather than only supplier diversification.
 
-## Why these tools and libraries were used
+## Problems faced and how they were handled
 
-### Python
+This project was not built on perfectly analysis-ready data. A few practical problems came up, and they shaped the design.
 
-Python is the main implementation language because it supports the full workflow:
+### Problem 1: messy operational fields
 
-- data preparation
-- modeling
-- optimization
-- testing
-- dashboarding
+The dataset contains placeholder text in places where numeric or date values would normally be expected.
 
-### Pandas and NumPy
+Examples:
 
-Used for:
+- freight embedded in commodity cost
+- weight captured separately
+- missing dates
+- note-style text fields such as `See DN...`
 
-- tabular cleaning
-- aggregations
-- date handling
-- feature generation
+**How it was handled**
 
-They are standard choices for structured supply chain analytics work.
+- standardized placeholder handling in preprocessing
+- created missing flags before imputation
+- logged cleaning decisions rather than hiding them
 
-### Statsmodels
+### Problem 2: mixed date and encoding issues
 
-Used for SARIMA because it is one of the most direct and explainable libraries for classical time-series forecasting.
+The CSV required more careful loading than a clean UTF-8 file, and date parsing was not uniform across fields.
 
-### XGBoost and scikit-learn
+**How it was handled**
 
-Used for:
+- added encoding fallback during ingestion
+- converted date parsing into a controlled preprocessing step
+- kept source and processed layers separate
 
-- lag-feature forecasting
-- late-delivery classification
-- standard validation and metrics
+### Problem 3: not every series has enough time depth
 
-These tools are practical, widely recognized, and strong enough for an interview-quality demonstration.
+Public datasets often look rich at the transaction level but become thin after item-level time aggregation.
 
-### PuLP
+**How it was handled**
 
-Used for optimization because it is readable and business-friendly.
+- filtered for higher-history series
+- used baseline and classical models alongside ML
+- allowed fallback aggregation when needed instead of pretending the data was deeper than it was
 
-### Streamlit
+### Problem 4: procurement constraints are not fully explicit in public data
 
-Used for the dashboard because it is fast to build, easy to run locally, and well suited for analytics demos.
+Real procurement systems often contain business rules that do not appear directly in Kaggle datasets.
 
-### Pytest
+**How it was handled**
 
-Used so the repo feels like a real engineering project instead of a notebook-only project.
+- modeled configurable assumptions in `src/config.py`
+- constrained optimization to historically observed vendor-item combinations
+- made assumptions visible in code and documentation
 
-## Repository structure
+### Problem 5: analytics is not enough without decisions
+
+Forecasts and risk tables are useful, but teams still need an actual order recommendation.
+
+**How it was handled**
+
+- connected forecasting and supplier risk into a procurement optimization layer
+- added simulation to test whether the recommended plan holds up under shocks
+
+## How this can be used
+
+This project can be used in several ways.
+
+### As a planning prototype
+
+A supply chain or procurement team could use it to:
+
+- monitor item demand trends
+- compare price behavior over time
+- review supplier reliability
+- generate sourcing recommendations
+
+### As a dashboard for business discussion
+
+The Streamlit app can support conversations such as:
+
+- which items are becoming more expensive
+- which suppliers should be watched more closely
+- how much cost and risk change when allocation rules change
+
+### As a technical project foundation
+
+The repository structure is modular enough to extend into:
+
+- cloud deployment
+- scheduled scoring
+- larger data processing frameworks such as PySpark
+- database-backed dashboards
+
+## Why the final outcome matters
+
+The value of ProcureIQ is not only that it produces forecasts or risk scores. The real value is that it connects those outputs into a sourcing recommendation that can be stress-tested.
+
+In the current run, the project produced:
+
+- cleaned and engineered supply chain data
+- forecast comparison outputs
+- supplier risk scores for `73` suppliers
+- an optimized procurement plan
+- scenario-based service-level and cost outputs
+- a working Streamlit dashboard
+
+That makes the final outcome more complete than a notebook-based analysis. It behaves more like a small decision-support product.
+
+## Project structure
 
 ```text
 procureiq-demand-supply-intelligence/
@@ -392,88 +468,48 @@ procureiq-demand-supply-intelligence/
 │   ├── processed/
 │   └── outputs/
 ├── notebooks/
-│   ├── 01_eda_data_quality.ipynb
-│   ├── 02_forecasting_experiments.ipynb
-│   ├── 03_supplier_risk_scoring.ipynb
-│   └── 04_procurement_optimization.ipynb
 ├── src/
-│   ├── data_ingestion.py
-│   ├── preprocessing.py
-│   ├── feature_engineering.py
-│   ├── forecasting.py
-│   ├── supplier_risk.py
-│   ├── optimization.py
-│   ├── simulation.py
-│   ├── dashboard_data.py
-│   ├── config.py
-│   └── utils.py
 ├── app/
-│   └── streamlit_app.py
 ├── reports/
 ├── tests/
 └── assets/
 ```
 
-## Architecture
+## How to run the project
 
-```text
-Kaggle CSV / Manual CSV
-        |
-        v
-data_ingestion.py
-        |
-        v
-preprocessing.py
-        |
-        v
-feature_engineering.py
-        |
-        +--------------------+------------------------+----------------------+
-        |                    |                        |                      |
-        v                    v                        v                      v
-forecasting.py         supplier_risk.py        optimization.py        simulation.py
-        |                    |                        |                      |
-        +--------------------+------------------------+----------------------+
-                                     |
-                                     v
-                             Streamlit dashboard
-```
-
-An image version is available at `assets/architecture_diagram.png`.
-
-## How to use this project
-
-### Step 1. Open the project
+### Step 1: move into the project folder
 
 ```powershell
 cd "f:\Portfolio\Supply Chain - DS Project\procureiq-demand-supply-intelligence"
 ```
 
-### Step 2. Create a virtual environment
+### Step 2: create a virtual environment
 
 ```powershell
 python -m venv .venv
 ```
 
-### Step 3. Activate the environment
+### Step 3: activate it
 
 ```powershell
 .\.venv\Scripts\Activate.ps1
 ```
 
-If PowerShell blocks it, use:
+If PowerShell blocks activation:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\.venv\Scripts\Activate.ps1
 ```
 
-### Step 4. Install dependencies
+### Step 4: install dependencies
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-### Step 5. Set up Kaggle credentials
+### Step 5: set up the dataset
+
+Option A: Kaggle API
 
 ```powershell
 copy .env.example .env
@@ -485,44 +521,34 @@ Then fill in:
 - `KAGGLE_KEY`
 - `KAGGLE_DATASET=apoorvwatsky/supply-chain-shipment-pricing-data`
 
-If you do not want to use Kaggle API:
+Option B: manual dataset placement
 
-- manually download the dataset
-- place the CSV inside `data/raw/`
+- download the CSV manually
+- place it inside `data/raw/`
 
-### Step 6. Run the entire pipeline
+### Step 6: run the full pipeline
 
-The easiest option is:
+The easiest way:
 
 ```powershell
 python run_project.py
 ```
 
-This runs the following steps in order:
-
-1. data ingestion
-2. preprocessing
-3. feature engineering
-4. forecasting
-5. supplier risk
-6. optimization
-7. simulation
-
-### Step 7. Open the dashboard
+### Step 7: open the dashboard
 
 ```powershell
 python -m streamlit run app\streamlit_app.py
 ```
 
-### Step 8. Run tests
+### Step 8: run tests
 
 ```powershell
 python -m pytest
 ```
 
-## Manual run option
+## Run steps one by one
 
-If you prefer to execute the pipeline one step at a time:
+If you want to run everything manually:
 
 ```powershell
 python -m src.data_ingestion
@@ -537,17 +563,17 @@ python -m src.simulation
 Important:
 
 - use `python -m ...`
-- do not run them as `python src\file.py`
+- do not run the files as `python src\file.py`
 
-## How to use `run_project.py`
+## Using the runner script
 
-### Run everything
+### Run all pipeline steps
 
 ```powershell
 python run_project.py
 ```
 
-### Resume from a later step
+### Start from a later step
 
 Example: start from forecasting
 
@@ -557,7 +583,7 @@ python run_project.py --from-step 4
 
 ### Stop after a specific step
 
-Example: run only through supplier risk
+Example: stop after supplier risk scoring
 
 ```powershell
 python run_project.py --to-step 5
@@ -575,15 +601,15 @@ python run_project.py --include-tests
 python run_project.py --open-dashboard
 ```
 
-### List available steps
+### List all steps
 
 ```powershell
 python run_project.py --list-steps
 ```
 
-## Files created by the pipeline
+## Output files
 
-### Processed data
+### Processed files
 
 - `data/processed/clean_base.csv`
 - `data/processed/raw_source_reference.csv`
@@ -592,27 +618,26 @@ python run_project.py --list-steps
 - `data/processed/engineered_supply_chain.csv`
 - `data/processed/weekly_snapshot.csv`
 
-### Forecasting outputs
+### Forecasting files
 
 - `data/outputs/model_comparison.csv`
 - `data/outputs/forecast_results.csv`
-- forecast PNG files in `data/outputs/`
+- forecast PNG charts
 
-### Supplier risk outputs
+### Supplier risk files
 
 - `data/outputs/supplier_risk_scores.csv`
 - `data/outputs/top_risky_suppliers.csv`
-- `data/outputs/supplier_risk_distribution.png`
-- `data/outputs/supplier_risk_feature_importance.png`
+- risk distribution and feature importance plots
 
-### Optimization outputs
+### Optimization files
 
 - `data/outputs/recommended_order_plan.csv`
 - `data/outputs/optimization_summary.csv`
 - `data/outputs/cost_savings_vs_baseline.csv`
 - `data/outputs/supplier_allocation_chart.png`
 
-### Simulation outputs
+### Simulation files
 
 - `data/outputs/service_level_distribution.csv`
 - `data/outputs/expected_stockout_cost.csv`
@@ -620,108 +645,44 @@ python run_project.py --list-steps
 
 ## Dashboard pages
 
-The Streamlit app includes five pages:
+The Streamlit app includes:
 
-### Executive Overview
+- Executive Overview
+- Forecasting
+- Supplier Risk
+- Procurement Optimizer
+- Scenario Simulator
 
-Used to summarize:
+## Technology choices
 
-- total shipments
-- total landed cost
-- late delivery rate
-- forecast accuracy
-- potential savings
+### Python
 
-### Forecasting
+Used as the core language because it supports data processing, forecasting, optimization, testing, and dashboarding in one ecosystem.
 
-Used to:
+### Pandas and NumPy
 
-- select a product group or item
-- compare actuals vs forecasts
-- review model comparisons
+Used for data cleaning, aggregations, and feature creation.
 
-### Supplier Risk
+### Statsmodels
 
-Used to:
+Used for SARIMA forecasting because it is a strong classical benchmark.
 
-- inspect supplier scores
-- identify risky vendors
-- understand the main drivers of risk
+### XGBoost and scikit-learn
 
-### Procurement Optimizer
+Used for lag-based forecasting and late-delivery prediction because they handle nonlinear patterns well and are widely trusted in applied ML workflows.
 
-Used to:
+### PuLP
 
-- adjust service level, risk weight, and storage assumptions
-- review recommended allocations
-- compare cost outcomes vs baselines
+Used for optimization because it is transparent and easy to translate into business logic.
 
-### Scenario Simulator
+### Streamlit
 
-Used to:
+Used to make the outputs easier to explore and present.
 
-- stress test the recommended plan
-- compare demand shock, delay shock, and inflation effects
+### Pytest
 
-## Interview talking points
+Used to keep the project structured and testable.
 
-### 30-second version
+## Final takeaway
 
-I built ProcureIQ, a Kaggle-based supply chain intelligence prototype that combines demand and price forecasting, supplier risk scoring, and procurement optimization. It forecasts weekly demand and unit price, identifies risky suppliers using delivery and price volatility signals, and recommends optimized supplier allocation using PuLP. The system demonstrates how data science can support S&OP, procurement, and inventory decisions.
-
-### 2-minute version
-
-This project shows how I would connect data engineering, predictive modeling, optimization, and decision support in a supply chain consulting context. I start with public shipment pricing and delivery data, clean and standardize operational fields, engineer vendor and item-level features, and forecast demand and price using time-aware validation. I then score supplier risk from reliability, volatility, and concentration patterns, and use those signals inside a procurement optimizer built with PuLP. Finally, I stress-test the recommended sourcing plan under demand and cost uncertainty and expose the outputs through a Streamlit dashboard. The point of the project is not just to build a model, but to build a business decision workflow.
-
-## Common interviewer questions
-
-### Why use XGBoost if ARIMA is available?
-
-Because they solve slightly different problems well. ARIMA is a very good structured baseline for univariate time series. XGBoost is useful when lagged features, rolling windows, and nonlinear behavior matter. Comparing both is stronger than assuming one should always win.
-
-### Why walk-forward validation?
-
-Because time-series performance should be measured in time order. Random K-fold would leak future information and make the evaluation less realistic.
-
-### How was supplier risk calculated?
-
-The score combines late delivery behavior, average delay, delay volatility, price volatility, freight volatility, missing-data rate, and concentration effects. That produces an explainable risk number from 0 to 100. A separate ML model predicts late shipment probability.
-
-### Why PuLP?
-
-Because it is readable, practical, and easy to explain. For an interview project, it shows optimization thinking without hiding the business logic behind a black box.
-
-### What are the optimization constraints?
-
-Demand satisfaction, MOQ, storage capacity, risky supplier caps, and service-level targets by item class.
-
-### How would this be deployed on Oracle OCI Data Science?
-
-Raw and processed data would move to OCI Object Storage. Model development could happen in OCI Data Science notebooks or jobs. Trained models could be tracked in OCI Model Catalog. Scheduled scoring and optimization could run through OCI Functions or OCI Data Flow. Results could be served via Autonomous Database and exposed in a separate dashboard layer.
-
-### How would this scale with PySpark?
-
-Preprocessing, feature engineering, and group-level aggregations are the first candidates to move to PySpark DataFrames. Forecasting could remain selective at the grouped-series level, while the feature tables and shipment processing scale out in Spark.
-
-## Honest project framing
-
-Use these points clearly in the interview:
-
-- this is a public-data prototype, not production enterprise data
-- some planning parameters such as MOQ, service level, and storage capacity are configurable assumptions
-- the cost savings are model outputs from a scenario-based optimization exercise, not audited real savings
-- the purpose of the project is to demonstrate end-to-end analytics thinking, clean implementation, and business communication
-
-## What to screenshot for your portfolio or interview
-
-- one EDA view showing missing values or vendor concentration
-- one forecast chart with actual vs forecast
-- one model comparison table
-- one supplier risk table or distribution
-- one optimization cost comparison view
-- one scenario summary or service-level distribution
-- one dashboard screenshot from each major page
-
-## Final note
-
-ProcureIQ is strongest when it is presented as a decision-support prototype, not just a coding exercise. The value of the project is that it shows how data engineering, forecasting, supplier analytics, optimization, and simulation can be combined into one coherent business workflow.
+ProcureIQ shows how forecasting, supplier analytics, optimization, and simulation can be combined into one supply chain decision workflow. The project is not just about predicting the future. It is about using historical operational data to make better procurement choices, understand trade-offs, and make planning decisions more resilient.
