@@ -162,6 +162,15 @@ def optimize_procurement(
     solver = pulp.PULP_CBC_CMD(msg=False)
     problem.solve(solver)
 
+    solver_status = pulp.LpStatus[problem.status]
+    LOGGER.info("Solver status: %s | objective value: %s", solver_status, pulp.value(problem.objective))
+    if problem.status != 1:
+        LOGGER.warning(
+            "Optimization did not reach an optimal solution (status: %s). "
+            "Results may be incomplete or infeasible.",
+            solver_status,
+        )
+
     results = []
     for row in feasible.itertuples():
         key = (row.vendor, row.item_description)

@@ -36,6 +36,7 @@ class SimulationConfig:
     inflation_mean_pct: float = 0.05
     inflation_std_pct: float = 0.02
     extra_delay_days_high_risk: int = 7
+    random_seed: int = 42
 
 
 @dataclass

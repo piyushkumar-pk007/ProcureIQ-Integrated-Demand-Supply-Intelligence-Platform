@@ -267,6 +267,7 @@ def evaluate_models_for_series(series: ForecastSeries, target_column: str) -> Tu
     tscv = TimeSeriesSplit(n_splits=min(3, max(2, len(data) // horizon - 1)))
 
     all_results = []
+    model_residuals: Dict[str, List[float]] = {}
     model_functions: Dict[str, Callable] = {
         "seasonal_naive": lambda train_df, test_df: seasonal_naive_forecast(train_df[target_column], len(test_df)),
         "moving_average": lambda train_df, test_df: moving_average_forecast(train_df[target_column], len(test_df)),
@@ -282,7 +283,9 @@ def evaluate_models_for_series(series: ForecastSeries, target_column: str) -> Tu
         for model_name, model_function in model_functions.items():
             try:
                 preds = np.asarray(model_function(train_df, test_df), dtype=float)
-                metrics = compute_metrics(test_df[target_column].to_numpy(dtype=float), preds)
+                y_true = test_df[target_column].to_numpy(dtype=float)
+                metrics = compute_metrics(y_true, preds)
+                model_residuals.setdefault(model_name, []).extend((y_true - preds).tolist())
                 all_results.append(
                     {
                         "series_id": series.series_id,
@@ -307,6 +310,12 @@ def evaluate_models_for_series(series: ForecastSeries, target_column: str) -> Tu
     if results_df.empty:
         return pd.DataFrame(), pd.DataFrame()
 
+    # Residual std per model — used to produce 90% prediction intervals on the final forecast.
+    residual_std: Dict[str, float] = {
+        name: float(np.std(res)) if res else 0.0
+        for name, res in model_residuals.items()
+    }
+
     summary_df = (
         results_df.groupby(["series_id", "entity_label", "target", "frequency", "model_name"], as_index=False)[
             ["mae", "rmse", "mape", "wape"]
@@ -321,6 +330,7 @@ def evaluate_models_for_series(series: ForecastSeries, target_column: str) -> Tu
         final_train = data.iloc[:-horizon].copy()
         final_test = data.iloc[-horizon:].copy()
         preds = model_functions[model_name](final_train, final_test)
+        r_std = residual_std.get(model_name, 0.0)
         forecast_frame = final_test.copy()
         forecast_frame["series_id"] = series.series_id
         forecast_frame["entity_label"] = series.entity_label
@@ -328,22 +338,37 @@ def evaluate_models_for_series(series: ForecastSeries, target_column: str) -> Tu
         forecast_frame["model_name"] = model_name
         forecast_frame["actual"] = final_test[target_column].to_numpy()
         forecast_frame["forecast"] = preds
-        best_forecasts.append(forecast_frame[["series_id", "entity_label", "target", "period", "actual", "forecast", "model_name"]])
+        forecast_frame["forecast_lower_90"] = np.maximum(preds - 1.645 * r_std, 0)
+        forecast_frame["forecast_upper_90"] = preds + 1.645 * r_std
+        best_forecasts.append(
+            forecast_frame[[
+                "series_id", "entity_label", "target", "period",
+                "actual", "forecast", "forecast_lower_90", "forecast_upper_90", "model_name",
+            ]]
+        )
 
     return summary_df, pd.concat(best_forecasts, ignore_index=True)
 
 
 def save_forecast_plot(forecast_df: pd.DataFrame, filename: str) -> None:
-    plt.figure(figsize=(10, 5))
-    plt.plot(forecast_df["period"], forecast_df["actual"], marker="o", label="Actual")
-    plt.plot(forecast_df["period"], forecast_df["forecast"], marker="o", label="Forecast")
-    plt.title(f"{forecast_df['entity_label'].iloc[0]} | {forecast_df['target'].iloc[0]}")
-    plt.xlabel("Period")
-    plt.ylabel("Value")
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(OUTPUT_DIR / filename, dpi=160)
-    plt.close()
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(forecast_df["period"], forecast_df["actual"], marker="o", label="Actual")
+    ax.plot(forecast_df["period"], forecast_df["forecast"], marker="o", label="Forecast")
+    if "forecast_lower_90" in forecast_df.columns and "forecast_upper_90" in forecast_df.columns:
+        ax.fill_between(
+            forecast_df["period"],
+            forecast_df["forecast_lower_90"],
+            forecast_df["forecast_upper_90"],
+            alpha=0.2,
+            label="90% prediction interval",
+        )
+    ax.set_title(f"{forecast_df['entity_label'].iloc[0]} | {forecast_df['target'].iloc[0]}")
+    ax.set_xlabel("Period")
+    ax.set_ylabel("Value")
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(OUTPUT_DIR / filename, dpi=160)
+    plt.close(fig)
 
 
 def main() -> None:

@@ -78,6 +78,7 @@ def run_scenario(
 
 
 def main() -> None:
+    np.random.seed(SIMULATION_CONFIG.random_seed)
     order_plan, demand_df = load_simulation_inputs()
     scenarios = [
         {"scenario_name": "Base case", "demand_multiplier": 1.0, "delay_shock": False, "inflation_multiplier": 1.0},

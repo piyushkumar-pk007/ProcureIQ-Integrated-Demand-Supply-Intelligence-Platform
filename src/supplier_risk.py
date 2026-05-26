@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import classification_report, roc_auc_score
+from sklearn.metrics import brier_score_loss, classification_report, f1_score, precision_recall_curve, roc_auc_score
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 
@@ -44,6 +44,13 @@ def _normalize(series: pd.Series) -> pd.Series:
     return (series - series.min()) / (series.max() - series.min())
 
 
+def _safe_cv(values: pd.Series) -> float:
+    mean = np.nanmean(values)
+    if mean == 0 or np.isnan(mean):
+        return 0.0
+    return float(np.nanstd(values) / mean)
+
+
 def build_rule_based_risk(df: pd.DataFrame) -> pd.DataFrame:
     missing_flag_cols = [column for column in df.columns if column.endswith("_missing_flag")]
     vendor_metrics = (
@@ -52,7 +59,7 @@ def build_rule_based_risk(df: pd.DataFrame) -> pd.DataFrame:
             on_time_delivery_rate=("is_late_delivery", lambda x: 1 - np.mean(x)),
             average_delay_days=("delivery_delay_days", "mean"),
             delay_volatility=("delivery_delay_days", "std"),
-            price_volatility_cv=("unit_price", lambda x: np.std(x) / np.mean(x) if np.mean(x) else 0),
+            price_volatility_cv=("unit_price", _safe_cv),
             shipment_volume=("line_item_quantity", "sum"),
             freight_cost_volatility=("freight_cost_usd", "std"),
             missing_data_rate=(missing_flag_cols[0], "mean") if missing_flag_cols else ("is_late_delivery", "mean"),
@@ -132,6 +139,11 @@ def train_late_delivery_model(df: pd.DataFrame) -> Dict[str, object]:
         LOGGER.warning("Not enough data to train ML supplier risk model.")
         return {"model_type": "insufficient_data"}
 
+    pos_count = int(modeling_df["is_late_delivery"].sum())
+    neg_count = len(modeling_df) - pos_count
+    # Scale by class imbalance so the minority class (late deliveries) is not underweighted.
+    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
+
     if XGBClassifier is not None:
         model = XGBClassifier(
             n_estimators=250,
@@ -141,6 +153,7 @@ def train_late_delivery_model(df: pd.DataFrame) -> Dict[str, object]:
             colsample_bytree=0.9,
             random_state=42,
             eval_metric="logloss",
+            scale_pos_weight=scale_pos_weight,
         )
         model_type = "xgboost_classifier"
     else:
@@ -155,23 +168,45 @@ def train_late_delivery_model(df: pd.DataFrame) -> Dict[str, object]:
     )
 
     splitter = TimeSeriesSplit(n_splits=3)
-    auc_scores = []
+    auc_scores: List[float] = []
+    brier_scores: List[float] = []
     for train_idx, test_idx in splitter.split(modeling_df):
         x_train = modeling_df.iloc[train_idx][available_features]
         y_train = modeling_df.iloc[train_idx]["is_late_delivery"]
         x_test = modeling_df.iloc[test_idx][available_features]
         y_test = modeling_df.iloc[test_idx]["is_late_delivery"]
+        if y_test.nunique() < 2:
+            continue
         pipeline.fit(x_train, y_train)
         probabilities = pipeline.predict_proba(x_test)[:, 1]
         auc_scores.append(roc_auc_score(y_test, probabilities))
+        brier_scores.append(brier_score_loss(y_test, probabilities))
 
     pipeline.fit(modeling_df[available_features], modeling_df["is_late_delivery"])
+
+    # Find the probability threshold that maximises F1 on the training data.
+    # This is heuristic but much better than always defaulting to 0.5 with imbalanced classes.
+    train_probs = pipeline.predict_proba(modeling_df[available_features])[:, 1]
+    precision, recall, thresholds = precision_recall_curve(modeling_df["is_late_delivery"], train_probs)
+    f1_values = 2 * precision * recall / (precision + recall + 1e-8)
+    optimal_threshold = float(thresholds[np.argmax(f1_values[:-1])]) if len(thresholds) > 0 else 0.5
+    optimal_threshold = float(np.clip(optimal_threshold, 0.1, 0.9))
+
+    LOGGER.info(
+        "Supplier risk model trained. AUC=%.3f  Brier=%.3f  threshold=%.2f",
+        float(np.mean(auc_scores)) if auc_scores else float("nan"),
+        float(np.mean(brier_scores)) if brier_scores else float("nan"),
+        optimal_threshold,
+    )
 
     return {
         "model_type": model_type,
         "features": available_features,
         "pipeline": pipeline,
-        "mean_auc": float(np.mean(auc_scores)),
+        "mean_auc": float(np.mean(auc_scores)) if auc_scores else float("nan"),
+        "mean_brier_score": float(np.mean(brier_scores)) if brier_scores else float("nan"),
+        "optimal_threshold": optimal_threshold,
+        "class_imbalance_ratio": scale_pos_weight,
     }
 
 
@@ -236,24 +271,39 @@ def main() -> None:
     risk_df = build_rule_based_risk(df)
     model_artifacts = train_late_delivery_model(df)
 
+    shipment_counts = df.groupby("vendor").size().reset_index(name="shipment_count")
+    risk_df = risk_df.merge(shipment_counts, on="vendor", how="left")
+    risk_df["confidence_tier"] = pd.cut(
+        risk_df["shipment_count"].fillna(0),
+        bins=[-1, 9, 19, float("inf")],
+        labels=["low_confidence", "medium_confidence", "high_confidence"],
+    )
+
     if "pipeline" in model_artifacts:
         feature_frame = df.groupby("vendor", as_index=False)[model_artifacts["features"]].mean(numeric_only=True)
+        threshold = model_artifacts.get("optimal_threshold", 0.5)
         probabilities = model_artifacts["pipeline"].predict_proba(feature_frame[model_artifacts["features"]])[:, 1]
         probability_df = pd.DataFrame(
             {
                 "vendor": feature_frame["vendor"],
                 "ml_late_delivery_probability": probabilities,
+                "ml_predicted_late": (probabilities >= threshold).astype(int),
             }
         )
         risk_df = risk_df.merge(probability_df, on="vendor", how="left")
         risk_df["ml_model_type"] = model_artifacts["model_type"]
         risk_df["ml_mean_auc"] = model_artifacts["mean_auc"]
+        risk_df["ml_mean_brier_score"] = model_artifacts.get("mean_brier_score", np.nan)
+        risk_df["ml_optimal_threshold"] = model_artifacts.get("optimal_threshold", 0.5)
         save_feature_importance_plot(model_artifacts, "supplier_risk_feature_importance.png")
         save_shap_plot(df, model_artifacts, "supplier_risk_shap_summary.png")
     else:
         risk_df["ml_late_delivery_probability"] = np.nan
+        risk_df["ml_predicted_late"] = np.nan
         risk_df["ml_model_type"] = model_artifacts.get("model_type", "not_available")
         risk_df["ml_mean_auc"] = np.nan
+        risk_df["ml_mean_brier_score"] = np.nan
+        risk_df["ml_optimal_threshold"] = np.nan
 
     top_risky = risk_df.sort_values("supplier_risk_score", ascending=False).head(15)
 
